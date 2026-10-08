@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Fruit Catcher - Bachhon Ka Mazedaar Game</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: linear-gradient(180deg, #70c5ce 0%, #b8e994 100%);
+      font-family: 'Comic Sans MS', 'Chalkboard SE', 'Segoe UI', cursive, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    #gameContainer {
+      position: relative;
+      width: 420px;
+      height: 600px;
+      max-width: 95vw;
+      max-height: 90vh;
+      border: 8px solid #ff7979;
+      border-radius: 20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      background: linear-gradient(to bottom, #81ecec, #ffeaa7);
+      overflow: hidden;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .hud {
+      position: absolute;
+      top: 12px;
+      left: 15px;
+      right: 15px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 20px;
+      font-weight: bold;
+      color: #2d3436;
+      text-shadow: 1px 1px 0 #fff;
+      pointer-events: none;
+    }
+    .overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      text-align: center;
+      padding: 20px;
+    }
+    .overlay h1 {
+      font-size: 32px;
+      color: #ffeaa7;
+      margin-bottom: 10px;
+      text-shadow: 2px 2px 0 #d63031;
+    }
+    .overlay p {
+      font-size: 16px;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+    .btn {
+      background: #ff7675;
+      border: none;
+      color: white;
+      padding: 12px 28px;
+      font-size: 20px;
+      border-radius: 30px;
+      cursor: pointer;
+      font-weight: bold;
+      box-shadow: 0 5px 0 #d63031;
+      transition: transform 0.1s;
+    }
+    .btn:active {
+      transform: translateY(4px);
+      box-shadow: 0 1px 0 #d63031;
+    }
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="gameContainer">
+    <div class="hud">
+      <div>🍎 Score: <span id="scoreVal">0</span></div>
+      <div>❤️ Lives: <span id="livesVal">❤️❤️❤️</span></div>
+    </div>
+    <canvas id="gameCanvas" width="420" height="600"></canvas>
+
+    <!-- Start Screen -->
+    <div id="startScreen" class="overlay">
+      <h1>🍎 Fruit Catcher! 🍌</h1>
+      <p>Fal pakado aur score badao!<br>💣 Bomb se bach kar rehna!<br><br>👉 Mouse, Left/Right arrow ya Touch se basket hilao.</p>
+      <button class="btn" id="startBtn">Game Shuru Karein</button>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="gameOverScreen" class="overlay hidden">
+      <h1 style="color: #ff7675;">Khatam! (Game Over)</h1>
+      <p id="finalScoreText" style="font-size: 20px; font-weight: bold;"></p>
+      <button class="btn" id="restartBtn">Dobara Khelein 🔄</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreVal = document.getElementById('scoreVal');
+    const livesVal = document.getElementById('livesVal');
+    const startScreen = document.getElementById('startScreen');
+    const gameOverScreen = document.getElementById('gameOverScreen');
+    const startBtn = document.getElementById('startBtn');
+    const restartBtn = document.getElementById('restartBtn');
+    const finalScoreText = document.getElementById('finalScoreText');
+
+    // Simple Audio Synthesizer (No external mp3 required)
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playBeep(freq, type = 'sine', duration = 0.1) {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+      } catch(e){}
+    }
+
+    const FRUITS = [
+      { emoji: '🍎', points: 10, isBomb: false },
+      { emoji: '🍌', points: 15, isBomb: false },
+      { emoji: '🍇', points: 20, isBomb: false },
+      { emoji: '🍓', points: 25, isBomb: false },
+      { emoji: '🍉', points: 30, isBomb: false },
+      { emoji: '💣', points: 0, isBomb: true }
+    ];
+
+    let basket = {
+      x: 170,
+      y: 520,
+      width: 80,
+      height: 40,
+      speed: 7
+    };
+
+    let items = [];
+    let score = 0;
+    let lives = 3;
+    let gameRunning = false;
+    let spawnTimer = 0;
+    let leftPressed = false;
+    let rightPressed = false;
+
+    // Controls
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft' || e.key === 'a') leftPressed = true;
+      if (e.key === 'ArrowRight' || e.key === 'd') rightPressed = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'ArrowLeft' || e.key === 'a') leftPressed = false;
+      if (e.key === 'ArrowRight' || e.key === 'd') rightPressed = false;
+    });
+
+    // Touch & Mouse Dragging
+    function handlePointer(clientX) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const targetX = (clientX - rect.left) * scaleX - basket.width / 2;
+      basket.x = Math.max(0, Math.min(canvas.width - basket.width, targetX));
+    }
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (gameRunning) handlePointer(e.clientX);
+    });
+
+    canvas.addEventListener('touchmove', (e) => {
+      if (gameRunning && e.touches.length > 0) {
+        handlePointer(e.touches[0].clientX);
+      }
+    }, { passive: true });
+
+    function spawnItem() {
+      const isBombChance = Math.random() < 0.2;
+      let selected;
+      if (isBombChance) {
+        selected = FRUITS.find(f => f.isBomb);
+      } else {
+        const pool = FRUITS.filter(f => !f.isBomb);
+        selected = pool[Math.floor(Math.random() * pool.length)];
+      }
+
+      items.push({
+        x: Math.random() * (canvas.width - 40) + 10,
+        y: -30,
+        speed: 2.5 + Math.random() * 2 + (score / 100),
+        emoji: selected.emoji,
+        points: selected.points,
+        isBomb: selected.isBomb,
+        size: 32
+      });
+    }
+
+    function update() {
+      if (!gameRunning) return;
+
+      // Keyboard movement
+      if (leftPressed && basket.x > 0) {
+        basket.x -= basket.speed;
+      }
+      if (rightPressed && basket.x < canvas.width - basket.width) {
+        basket.x += basket.speed;
+      }
+
+      // Spawning
+      spawnTimer++;
+      if (spawnTimer > 45) {
+        spawnItem();
+        spawnTimer = 0;
+      }
+
+      // Items movement & collision
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        item.y += item.speed;
+
+        // Collision with Basket
+        if (
+          item.y + 15 >= basket.y &&
+          item.y - 15 <= basket.y + basket.height &&
+          item.x + 15 >= basket.x &&
+          item.x - 15 <= basket.x + basket.width
+        ) {
+          if (item.isBomb) {
+            playBeep(120, 'sawtooth', 0.3);
+            lives--;
+            updateHearts();
+            if (lives <= 0) endGame();
+          } else {
+            playBeep(587.33, 'triangle', 0.15); // Ting sound (D5)
+            score += item.points;
+            scoreVal.textContent = score;
+          }
+          items.splice(i, 1);
+          continue;
+        }
+
+        // Missed item falling off-screen
+        if (item.y > canvas.height + 20) {
+          if (!item.isBomb) {
+            lives--;
+            updateHearts();
+            playBeep(150, 'sine', 0.2);
+            if (lives <= 0) endGame();
+          }
+          items.splice(i, 1);
+        }
+      }
+    }
+
+    function updateHearts() {
+      livesVal.textContent = '❤️'.repeat(Math.max(0, lives));
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw Basket
+      ctx.fillStyle = '#e67e22';
+      ctx.beginPath();
+      ctx.roundRect(basket.x, basket.y, basket.width, basket.height, [8, 8, 20, 20]);
+      ctx.fill();
+      ctx.strokeStyle = '#d35400';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      // Basket texture/pattern
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('🧺', basket.x + basket.width / 2, basket.y + 28);
+
+      // Draw Falling Items
+      for (let item of items) {
+        ctx.font = `${item.size}px Arial`;
+        ctx.fillText(item.emoji, item.x, item.y);
+      }
+    }
+
+    function loop() {
+      update();
+      draw();
+      if (gameRunning) requestAnimationFrame(loop);
+    }
+
+    function startGame() {
+      score = 0;
+      lives = 3;
+      items = [];
+      spawnTimer = 0;
+      basket.x = canvas.width / 2 - basket.width / 2;
+      scoreVal.textContent = '0';
+      updateHearts();
+
+      startScreen.classList.add('hidden');
+      gameOverScreen.classList.add('hidden');
+      gameRunning = true;
+      requestAnimationFrame(loop);
+    }
+
+    function endGame() {
+      gameRunning = false;
+      playBeep(80, 'sawtooth', 0.5);
+      finalScoreText.textContent = `Aapka Score: ${score} Points! 🌟`;
+      gameOverScreen.classList.remove('hidden');
+    }
+
+    startBtn.addEventListener('click', startGame);
+    restartBtn.addEventListener('click', startGame);
+  </script>
+</body>
+</html>
